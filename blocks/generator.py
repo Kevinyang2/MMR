@@ -61,3 +61,33 @@ class PointGenerator(nn.Module):
             points.append(buffer[:size, :])  # slice the cached buffer to the requested size
         points = torch.cat(points)
         return points
+
+
+class DensePointGenerator(PointGenerator):
+    """PointGenerator with sub-stride density for short-moment coverage.
+
+    Generates `point_density` × more points per level by placing them
+    at stride / point_density intervals.  All points within a level
+    share the same pyramid feature but have different center coordinates,
+    allowing the regression head to predict distinct offsets for each.
+    """
+
+    def __init__(self, strides, buffer_size, point_density=2, offset=False):
+        self.point_density = point_density
+        super().__init__(strides, buffer_size, offset=offset)
+
+    def _cache_points(self):
+        buffer_list = []
+        for stride, reg_range in zip(self.strides, self.reg_range):
+            reg_range = torch.Tensor([reg_range])
+            lv_stride = torch.Tensor([stride])
+            # sub-stride step: generate point_density × more centers
+            step = stride / self.point_density
+            points = torch.arange(0, self.buffer_size, step)[:, None]
+            if self.offset:
+                points += 0.5 * step
+            reg_range = reg_range.repeat(points.size(0), 1)
+            lv_stride = lv_stride.repeat(points.size(0), 1)
+            buffer_list.append(torch.cat((points, reg_range, lv_stride), dim=1))
+        buffer = BufferList(buffer_list)
+        return buffer
