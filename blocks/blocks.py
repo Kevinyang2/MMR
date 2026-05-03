@@ -97,3 +97,75 @@ class ConvHead(nn.Module):
 
     def forward(self, x):
         return self.module(x)
+
+
+@MODELS.register()
+class ConvPyramidFPN(ConvPyramid):
+    """ConvPyramid with Feature Pyramid Network top-down pathway.
+
+    Bottom-up (inherited): produces features at strides (1, 2, 4, 8).
+    Top-down (added):   upsamples coarse features and fuses with fine
+                         features via lateral connections, enabling
+                         short-moment levels to receive long-range context.
+    """
+
+    def __init__(self, dims, strides):
+        super().__init__(dims, strides)
+        num_levels = len(strides)
+
+        # Lateral 1x1 conv to align channels before element-wise fusion
+        self.lateral_convs = nn.ModuleList([
+            nn.Sequential(Permute(), nn.Conv1d(dims, dims, 1),
+                          Permute(), nn.LayerNorm(dims))
+            for _ in range(num_levels)
+        ])
+
+        # Output 3x3 conv after each merge to reduce aliasing
+        self.fpn_convs = nn.ModuleList([
+            nn.Sequential(Permute(), nn.Conv1d(dims, dims, 3, padding=1),
+                          Permute(), nn.LayerNorm(dims), nn.ReLU(inplace=True))
+            for _ in range(num_levels)
+        ])
+
+    def forward(self, x, mask, return_mask=False):
+        # ---- bottom-up (inherited) ----
+        pymid, pymid_msk = super().forward(x, mask, return_mask=True)
+        num_levels = len(pymid)
+
+        # ---- top-down (from coarsest to finest) ----
+        fpn_feats = [None] * num_levels
+
+        # start from coarsest: lateral → output conv
+        p = self.lateral_convs[-1](pymid[-1])
+        fpn_feats[-1] = self.fpn_convs[-1](p)
+
+        for i in range(num_levels - 2, -1, -1):
+            lat = self.lateral_convs[i](pymid[i])
+            prev = fpn_feats[i + 1]
+
+            # upsample coarser feature to current temporal resolution
+            prev_up = F.interpolate(
+                prev.transpose(1, 2),  # (B, C, T_{i+1})
+                size=pymid[i].size(1),
+                mode="linear",
+                align_corners=False,
+            ).transpose(1, 2)          # (B, T_i, C)
+
+            fpn_feats[i] = self.fpn_convs[i](lat + prev_up)
+
+        if not return_mask:
+            return fpn_feats, []
+
+        # align masks to FPN output sizes
+        fpn_msk = []
+        for i in range(num_levels):
+            m = pymid_msk[i] if i < len(pymid_msk) else pymid_msk[-1]
+            if m.size(1) != fpn_feats[i].size(1):
+                m = F.interpolate(
+                    m.float().unsqueeze(1),
+                    size=fpn_feats[i].size(1),
+                    mode="nearest",
+                ).squeeze(1).long()
+            fpn_msk.append(m)
+
+        return fpn_feats, fpn_msk

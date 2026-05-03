@@ -4,7 +4,7 @@ model = dict(
     strides=(1, 2, 4, 8),
     buffer_size=1024,
     max_num_moment=50,
-    pyramid_cfg=dict(type="ConvPyramid"),
+    pyramid_cfg=dict(type="ConvPyramidFPN"),
     pooling_cfg=dict(type="AdaPooling"),
     class_head_cfg=dict(type="ConvHead", kernal_size=3),
     coord_head_cfg=dict(type="ConvHead", kernal_size=3),
