@@ -169,3 +169,92 @@ class ConvPyramidFPN(ConvPyramid):
             fpn_msk.append(m)
 
         return fpn_feats, fpn_msk
+
+
+@MODELS.register()
+class ConvPyramidChainedFPN(nn.Module):
+    """True hierarchical feature pyramid with chained bottom-up + FPN top-down.
+
+    Bottom-up (chained):  x → C₁ → ds → C₂ → ds → C₃ → ds → C₄
+    Top-down (FPN):       C₄ → ×2 → +C₃ → ... → P₁, P₂, P₃, P₄
+
+    Unlike ConvPyramidFPN (which applies independent blocks to x),
+    each level builds on the previous, creating genuine semantic
+    hierarchy — coarser levels encode progressively more abstract
+    features, making the top-down pathway meaningful.
+    """
+
+    def __init__(self, dims, strides):
+        super().__init__()
+        self.strides = strides
+        num_levels = len(strides)
+
+        self.blocks = nn.ModuleList()
+        for s in strides:
+            p = int(math.log2(s))
+            if p == 0:
+                layers = nn.ReLU(inplace=False)
+            else:
+                layers = nn.Sequential()
+                for _ in range(abs(p)):
+                    layers.extend([
+                        Permute(),
+                        nn.Conv1d(dims, dims, 3, stride=2, padding=1),
+                        Permute(),
+                        nn.LayerNorm(dims),
+                        nn.ReLU(inplace=True),
+                    ])
+            self.blocks.append(layers)
+
+        # FPN lateral: 1x1 conv
+        self.lateral_convs = nn.ModuleList([
+            nn.Sequential(Permute(), nn.Conv1d(dims, dims, 1),
+                          Permute(), nn.LayerNorm(dims))
+            for _ in range(num_levels)
+        ])
+
+        # FPN output: 3x3 conv after merge
+        self.fpn_convs = nn.ModuleList([
+            nn.Sequential(Permute(), nn.Conv1d(dims, dims, 3, padding=1),
+                          Permute(), nn.LayerNorm(dims), nn.ReLU(inplace=True))
+            for _ in range(num_levels)
+        ])
+
+    def forward(self, x, mask, return_mask=False):
+        # ---- chained bottom-up ----
+        pymid, pymid_msk = [], []
+        cur = x
+        cur_mask = mask
+
+        for s, blk in zip(self.strides, self.blocks):
+            if cur.size(1) < s:
+                continue
+            cur = blk(cur)
+            pymid.append(cur)
+
+            if return_mask:
+                if s > 1:
+                    cur_mask = F.max_pool1d(cur_mask.float(), 2, stride=2).long()
+                pymid_msk.append(cur_mask)
+
+        num_levels = len(pymid)
+
+        # ---- FPN top-down ----
+        fpn_feats = [None] * num_levels
+        p = self.lateral_convs[-1](pymid[-1])
+        fpn_feats[-1] = self.fpn_convs[-1](p)
+
+        for i in range(num_levels - 2, -1, -1):
+            lat = self.lateral_convs[i](pymid[i])
+            prev_up = F.interpolate(
+                fpn_feats[i + 1].transpose(1, 2),
+                size=pymid[i].size(1),
+                mode="linear",
+                align_corners=False,
+            ).transpose(1, 2)
+            fpn_feats[i] = self.fpn_convs[i](lat + prev_up)
+
+        if not return_mask:
+            return fpn_feats, []
+
+        return fpn_feats, pymid_msk
