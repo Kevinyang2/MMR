@@ -175,13 +175,12 @@ class ConvPyramidFPN(ConvPyramid):
 class ConvPyramidChainedFPN(nn.Module):
     """True hierarchical feature pyramid with chained bottom-up + FPN top-down.
 
-    Bottom-up (chained):  x → C₁ → ds → C₂ → ds → C₃ → ds → C₄
+    Bottom-up (chained):  x → ReLU → C₁ → ds → C₂ → ds → C₃ → ds → C₄
     Top-down (FPN):       C₄ → ×2 → +C₃ → ... → P₁, P₂, P₃, P₄
 
-    Unlike ConvPyramidFPN (which applies independent blocks to x),
-    each level builds on the previous, creating genuine semantic
-    hierarchy — coarser levels encode progressively more abstract
-    features, making the top-down pathway meaningful.
+    Each level builds on the previous with a single factor-2 downsampling
+    step, creating genuine semantic hierarchy.
+    Feature sizes mirror the original ConvPyramid (T, T/2, T/4, T/8).
     """
 
     def __init__(self, dims, strides):
@@ -189,22 +188,16 @@ class ConvPyramidChainedFPN(nn.Module):
         self.strides = strides
         num_levels = len(strides)
 
-        self.blocks = nn.ModuleList()
-        for s in strides:
-            p = int(math.log2(s))
-            if p == 0:
-                layers = nn.ReLU(inplace=False)
-            else:
-                layers = nn.Sequential()
-                for _ in range(abs(p)):
-                    layers.extend([
-                        Permute(),
-                        nn.Conv1d(dims, dims, 3, stride=2, padding=1),
-                        Permute(),
-                        nn.LayerNorm(dims),
-                        nn.ReLU(inplace=True),
-                    ])
-            self.blocks.append(layers)
+        # Single factor-2 downsampling block between consecutive levels
+        self.ds_blocks = nn.ModuleList()
+        for _ in range(num_levels - 1):
+            self.ds_blocks.append(nn.Sequential(
+                Permute(),
+                nn.Conv1d(dims, dims, 2, stride=2),
+                Permute(),
+                nn.LayerNorm(dims),
+                nn.ReLU(inplace=True),
+            ))
 
         # FPN lateral: 1x1 conv
         self.lateral_convs = nn.ModuleList([
@@ -226,15 +219,18 @@ class ConvPyramidChainedFPN(nn.Module):
         cur = x
         cur_mask = mask
 
-        for s, blk in zip(self.strides, self.blocks):
-            if cur.size(1) < s:
-                continue
-            cur = blk(cur)
-            pymid.append(cur)
+        # Level 0 (stride=1): ReLU
+        c = F.relu(cur)
+        pymid.append(c)
+        if return_mask:
+            pymid_msk.append(cur_mask)
 
+        # Levels 1..N-1: downsample by 2 each step
+        for ds in self.ds_blocks:
+            cur = ds(cur)
+            pymid.append(cur)
             if return_mask:
-                if s > 1:
-                    cur_mask = F.max_pool1d(cur_mask.float(), 2, stride=2).long()
+                cur_mask = F.max_pool1d(cur_mask.float(), 2, stride=2).long()
                 pymid_msk.append(cur_mask)
 
         num_levels = len(pymid)
