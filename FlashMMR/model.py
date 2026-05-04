@@ -226,6 +226,15 @@ class FlashMMR(nn.Module):
             video_msk = F.interpolate(
                 video_msk.float().unsqueeze(1), size=new_T, mode="nearest"
             ).squeeze(1).long()
+            if self.training:
+                targets["saliency_all_labels"] = F.interpolate(
+                    targets["saliency_all_labels"].float().unsqueeze(1),
+                    size=new_T, mode="nearest"
+                ).squeeze(1).long()
+                targets["saliency_pos_labels"] = F.interpolate(
+                    targets["saliency_pos_labels"].float().unsqueeze(1),
+                    size=new_T, mode="nearest"
+                ).squeeze(1).long()
 
         pymid, pymid_msk = self.pyramid(video_emb, video_msk, return_mask=self.training)
         point = self.generator(pymid)
