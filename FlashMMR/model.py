@@ -273,7 +273,7 @@ class FlashMMR(nn.Module):
                 boundary=boundaries,
                 fps=torch.full(
                     (src_vid.size(0),),
-                    1 / self._eff_clip,
+                    1 / self.args.clip_length,
                     dtype=video_emb.dtype,
                     device=src_vid.device,
                 ),
@@ -494,11 +494,11 @@ class FlashMMR(nn.Module):
             spans = target["spans"].to(device)
             if self.args.span_loss_type == "l1":
                 xx = span_cxw_to_xx(spans.float())
-                seconds = xx * (valid_lengths[i] * self._eff_clip)
+                seconds = xx * (valid_lengths[i] * self.args.clip_length)
             elif self.args.span_loss_type == "ce":
                 seconds = spans.float()
                 seconds[:, 1] += 1
-                seconds = seconds * self._eff_clip
+                seconds = seconds * self.args.clip_length
             else:
                 raise NotImplementedError(f"Unsupported span_loss_type: {self.args.span_loss_type}")
             seconds[:, 0] = seconds[:, 0].clamp(min=0)
