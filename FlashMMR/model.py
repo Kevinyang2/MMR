@@ -134,6 +134,8 @@ class FlashMMR(nn.Module):
         self.max_num_moment = max_num_moment
         self.merge_cls_sal = merge_cls_sal
         self.args = args
+        self.feat_interp = getattr(args, "feat_interp", 1)
+        self._eff_clip = args.clip_length / self.feat_interp  # effective clip length after interpolation
         self.x = nn.Parameter(torch.tensor(0.5))
         self.use_post_verification = bool(getattr(args, "use_SRM", False))
         self.use_pv_repr = self.use_post_verification and getattr(args, "use_pv_repr", False)
@@ -214,6 +216,17 @@ class FlashMMR(nn.Module):
 
         video_emb = video_emb.permute(1, 0, 2)
         video_msk = (~video_msk).int()
+
+        if self.feat_interp > 1:
+            B, T, C = video_emb.shape
+            new_T = T * self.feat_interp
+            video_emb = F.interpolate(
+                video_emb.transpose(1, 2), size=new_T, mode="linear", align_corners=False
+            ).transpose(1, 2)
+            video_msk = F.interpolate(
+                video_msk.float().unsqueeze(1), size=new_T, mode="nearest"
+            ).squeeze(1).long()
+
         pymid, pymid_msk = self.pyramid(video_emb, video_msk, return_mask=self.training)
         point = self.generator(pymid)
 
@@ -251,7 +264,7 @@ class FlashMMR(nn.Module):
                 boundary=boundaries,
                 fps=torch.full(
                     (src_vid.size(0),),
-                    1 / self.args.clip_length,
+                    1 / self._eff_clip,
                     dtype=video_emb.dtype,
                     device=src_vid.device,
                 ),
@@ -310,7 +323,7 @@ class FlashMMR(nn.Module):
         stride = point[:, 3].to(device=out_coord.device, dtype=out_coord.dtype).view(1, -1, 1)
         center = point[:, 0].to(device=out_coord.device, dtype=out_coord.dtype).view(1, -1, 1)
         boundaries = boundaries * stride + center
-        boundaries = boundaries / (1 / self.args.clip_length)
+        boundaries = boundaries / (1 / self._eff_clip)
         start = torch.minimum(boundaries[:, :, 0], boundaries[:, :, 1])
         end = torch.maximum(boundaries[:, :, 0], boundaries[:, :, 1])
         return torch.stack((start, end), dim=-1)
@@ -334,7 +347,7 @@ class FlashMMR(nn.Module):
         batch_size, num_clips, hidden_dim = video_emb.shape
         clip_centers = (
             torch.arange(num_clips, device=video_emb.device, dtype=video_emb.dtype) + 0.5
-        ) * self.args.clip_length
+        ) * self._eff_clip
         pooled = video_emb.new_zeros(batch_size, boundaries.size(1), hidden_dim)
 
         for b in range(batch_size):
@@ -427,7 +440,7 @@ class FlashMMR(nn.Module):
         # L_adj: boundary adjustment loss
         if self.use_pv_adj:
             deltas = self.pv_adj_head(pooled)  # (B, K, 2): delta_start, delta_end
-            refined = selected_boundaries + deltas * self.args.clip_length
+            refined = selected_boundaries + deltas * self._eff_clip
             tiou_targets = self._best_tiou_targets(refined, gt_boundaries)
             pv_scores_refined = pv_logits.sigmoid()
             extra["loss_pv_adj"] = F.mse_loss(pv_scores_refined, tiou_targets)
@@ -442,7 +455,7 @@ class FlashMMR(nn.Module):
         refined_scores = top_scores * pv_scores
         if self.use_pv_adj:
             deltas = self.pv_adj_head(pooled)  # (1, K, 2)
-            selected_boundaries = selected_boundaries + deltas * self.args.clip_length
+            selected_boundaries = selected_boundaries + deltas * self._eff_clip
         boundary = torch.cat((selected_boundaries, refined_scores.unsqueeze(-1)), dim=-1)
         order = refined_scores.argsort(dim=1, descending=True)
         return boundary.gather(1, order.unsqueeze(-1).expand(-1, -1, 3))
@@ -472,11 +485,11 @@ class FlashMMR(nn.Module):
             spans = target["spans"].to(device)
             if self.args.span_loss_type == "l1":
                 xx = span_cxw_to_xx(spans.float())
-                seconds = xx * (valid_lengths[i] * self.args.clip_length)
+                seconds = xx * (valid_lengths[i] * self._eff_clip)
             elif self.args.span_loss_type == "ce":
                 seconds = spans.float()
                 seconds[:, 1] += 1
-                seconds = seconds * self.args.clip_length
+                seconds = seconds * self._eff_clip
             else:
                 raise NotImplementedError(f"Unsupported span_loss_type: {self.args.span_loss_type}")
             seconds[:, 0] = seconds[:, 0].clamp(min=0)
