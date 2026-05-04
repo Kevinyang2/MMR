@@ -72,8 +72,6 @@ class BaseOptions(object):
         parser.add_argument("--max_q_l", type=int, default=-1)
         parser.add_argument("--max_v_l", type=int, default=-1)
         parser.add_argument("--clip_length", type=float, default=2)
-        parser.add_argument("--feat_interp", type=int, default=1,
-                            help="temporal interpolation factor for features (1=no change, 2=double resolution)")
         parser.add_argument("--max_windows", type=int, default=5)
 
         parser.add_argument("--train_path", type=str, default=None)
