@@ -307,15 +307,11 @@ class FlashMMR(nn.Module):
         out_class = out_class.sigmoid()
 
         boundaries = self._decode_boundaries(out_coord, point)
-        base_scores = out_class.squeeze(-1)
-        if self.use_post_verification:
-            boundary = self._rerank_with_post_verification(
-                boundaries, base_scores, video_emb, video_msk, query_emb
-            )[0]
-        else:
-            boundary = torch.cat((boundaries[0], out_class[0]), dim=-1)
-            _, inds = out_class[0, :, 0].sort(descending=True)
-            boundary = boundary[inds[: self.max_num_moment]]
+        # Inference: paper-consistent — raw detection head output.
+        # PV module is training-only auxiliary supervision (L_PV + L_repr).
+        boundary = torch.cat((boundaries[0], out_class[0]), dim=-1)
+        _, inds = out_class[0, :, 0].sort(descending=True)
+        boundary = boundary[inds[: self.max_num_moment]]
 
         output["_out"] = dict(
             label=None if targets is None else targets.get("label", [None])[0],
