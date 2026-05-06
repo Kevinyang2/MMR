@@ -1,4 +1,4 @@
-# QV-M3: Multi-Moment Retrieval with Fine-Grained Temporal Modeling
+﻿# QV-M3: Multi-Moment Retrieval with Fine-Grained Temporal Modeling
 
 基于 QV-M2 (NeurIPS 2025) FlashMMR 最优配置（G-mAP 35.06），聚焦短时刻检测改进。
 
