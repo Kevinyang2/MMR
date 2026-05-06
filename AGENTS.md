@@ -9,19 +9,17 @@
 - The documented QV-M3/FlashMMR environment is `conda` env `flashmmr` with Python 3.12; install with `pip install -r requirements.txt` (`torch==2.2.2`, `torchtext==0.17.2`, `nncore==0.4.2`).
 - `CGSTVG/` has its own `CGSTVG/requirements.txt` (`torchtext==0.15.2`, `transformers==4.5.1`, `yacs`, OpenCV/ffmpeg deps); do not assume the root requirements satisfy that stack.
 - Scripts assume the repo root is importable. On Windows use `$env:PYTHONPATH = "D:\QV-M3"`; shell scripts use `PYTHONPATH=$PYTHONPATH:.`.
-- `run_fpn_train.ps1` hard-codes `D:\QV-M3` and calls `Set-Location D:\QV-M3`; update it if the checkout moves.
 - `features/` is gitignored and expected to contain QV-M2 feature dirs such as `slowfast_features`, `clip_features`, and `clip_text_features_new`.
 
 ## FlashMMR Workflows
-- Baseline/FPN training uses `conda run -n flashmmr --no-capture-output python FlashMMR/train.py data/MR.py ...`; `train.md` and `run_seeds.ps1` contain the canonical long argument set.
+- Baseline training uses `conda run -n flashmmr --no-capture-output python FlashMMR/train.py data/MR.py ...`; `train.md` contains the canonical long argument set.
 - `--exp_id` is required for training. Results are written under `results/<dset>-<ctx>-<exp_id>-<timestamp>/` with `opt.json`, `model.ckpt`, `model_best.ckpt`, `best.json`, `code.zip`, TensorBoard logs, and per-eval submission/metrics files.
-- Multi-seed runs are driven by `run_seeds.ps1` for seeds `2024, 42, 123, 777`; it reads `best.json` and `hl_val_epoch_<epoch>_submission_nms_thd_0.7_metrics.json`, then writes `results/seed_comparison.md`.
 - Standalone metric recomputation is `python standalone_eval/eval.py --submission_path <jsonl> --gt_path data/QV-M2/test.jsonl --save_path <json>`.
 
 ## FlashMMR Architecture Notes
 - `FlashMMR/train.py` builds `StartEndDataset`, `FlashMMR.model.build_model`, AdamW, StepLR, and calls `FlashMMR.inference.eval_epoch` every `--eval_epoch` epochs.
 - Model variants are selected through `data/MR.py` nncore config: `pyramid_cfg=dict(type="ConvPyramid")`, heads/losses in `blocks/*`, and runtime CLI knobs in `FlashMMR/config.py`.
-- `blocks/blocks.py` registers `ConvPyramid`, `ConvPyramidFPN`, and `ConvPyramidChainedFPN`; switch the `pyramid_cfg` type in `data/MR.py` rather than editing generated copies in `results/`.
+- `blocks/blocks.py` registers the baseline `ConvPyramid`; switch model wiring through `data/MR.py` rather than editing generated copies in `results/`.
 - `FlashMMR/inference.py` writes both raw submissions and NMS submissions by default (`--nms_thd` defaults to `0.7`; use `-1` to disable NMS).
 
 ## CGSTVG Notes

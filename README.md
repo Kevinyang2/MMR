@@ -1,4 +1,4 @@
-﻿# QV-M3: Multi-Moment Retrieval with Fine-Grained Temporal Modeling
+# QV-M3: Multi-Moment Retrieval with Fine-Grained Temporal Modeling
 
 基于 QV-M2 (NeurIPS 2025) FlashMMR 最优配置（G-mAP 35.06），聚焦短时刻检测改进。
 
@@ -13,12 +13,6 @@
 | mIoU@1 | 56.19 |
 | mR@1 | 49.42 |
 | Short (0-10s) | 15.90 |
-
-## 改进路线
-
-- [ ] **FPN Top-Down Path** — 金字塔加自上而下路径，高层语义回传低层
-- [ ] **Denser Point Grid** — PointGenerator 支持 sub-clip 偏移，point 密度翻倍
-- [ ] Short moment loss reweighting
 
 ## 快速开始
 
